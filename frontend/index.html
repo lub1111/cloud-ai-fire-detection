@@ -1,0 +1,650 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudVision | AI Fire Monitoring</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #0b1220;
+      color: #edf2fa;
+      font-family: Arial, sans-serif;
+    }
+
+    header {
+      padding: 24px 6%;
+      background: #111c2e;
+      border-bottom: 1px solid #26354a;
+    }
+
+    header h1 {
+      margin: 0;
+      color: #60a5fa;
+    }
+
+    header p {
+      color: #9fb0c6;
+      margin-bottom: 0;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: #152238;
+      padding: 24px;
+      border: 1px solid #2a3b52;
+      border-radius: 14px;
+      margin-bottom: 20px;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-top: 0;
+    }
+
+    input[type="file"] {
+      display: block;
+      width: 100%;
+      margin: 20px 0;
+      color: #dce6f5;
+    }
+
+    button {
+      background: #2563eb;
+      color: white;
+      padding: 13px 22px;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
+
+    .preview {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 350px;
+      object-fit: contain;
+      border-radius: 10px;
+      background: #09111e;
+    }
+
+    .status {
+      padding: 15px;
+      border-radius: 10px;
+      margin-top: 15px;
+      background: #26354a;
+    }
+
+    .danger {
+      background: #7f1d1d;
+      border: 1px solid #ef4444;
+      color: #fee2e2;
+    }
+
+    .warning {
+      background: #78350f;
+      border: 1px solid #f59e0b;
+      color: #fef3c7;
+    }
+
+    .neutral {
+      background: #26354a;
+      border: 1px solid #475569;
+    }
+
+    .metric {
+      font-size: 30px;
+      font-weight: bold;
+      color: #60a5fa;
+    }
+
+    .muted {
+      color: #a4b4c9;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    pre {
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      color: #dbeafe;
+    }
+
+    footer {
+      text-align: center;
+      color: #8494ac;
+      padding: 20px;
+      font-size: 12px;
+    }
+
+    /* ALERT HISTORY TABLE */
+    .history-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .history-header h2 { margin: 0; }
+    .history-table-wrap { overflow-x: auto; margin-top: 16px; }
+    .history-table { width: 100%; border-collapse: collapse; text-align: left; }
+    .history-table th, .history-table td { padding: 12px; border-bottom: 1px solid #2a3b52; }
+    .history-table th { color: #a4b4c9; font-size: 13px; }
+    .history-table td { overflow-wrap: anywhere; }
+    .history-table .fire-alert { color: #fca5a5; font-weight: bold; }
+    .history-table .smoke-alert { color: #fcd34d; font-weight: bold; }
+    .history-table .no-alert { color: #a4b4c9; }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>CloudVision</h1>
+    <p>AI-Based Fire & Smoke Detection Dashboard</p>
+  </header>
+
+  <main>
+
+    <div class="grid">
+
+      <!-- IMAGE UPLOAD -->
+      <section class="card">
+
+        <h2>Upload Image</h2>
+
+        <p class="muted">
+          Upload an image to check for fire or smoke.
+        </p>
+
+        <input
+          type="file"
+          id="imageInput"
+          accept="image/jpeg,image/png"
+        >
+
+        <button id="detectButton" onclick="detectFire()">
+          Analyze Image
+        </button>
+
+        <p id="loading" class="muted hidden">
+          AI is analyzing your image...
+        </p>
+
+        <div id="alertBox" class="status neutral" role="status">
+          Waiting for an image.
+        </div>
+
+      </section>
+
+      <!-- DETECTION PREVIEW -->
+      <section class="card">
+
+        <h2>AI Detection Preview</h2>
+
+        <canvas
+          id="detectionCanvas"
+          class="preview hidden"
+          aria-label="Image with AI detection bounding boxes"
+        ></canvas>
+
+        <p id="noPreview" class="muted">
+          No image selected yet.
+        </p>
+
+        <p id="previewNote" class="muted hidden">
+          Red = Fire | Orange = Smoke
+        </p>
+
+      </section>
+
+    </div>
+
+    <div class="grid">
+
+      <!-- DETECTION SUMMARY -->
+      <section class="card">
+
+        <h2>Detection Summary</h2>
+
+        <p>Total detections</p>
+
+        <div id="totalDetections" class="metric">—</div>
+
+        <p>
+          Fire detected:
+          <strong id="fireStatus">—</strong>
+        </p>
+
+        <p>
+          Smoke detected:
+          <strong id="smokeStatus">—</strong>
+        </p>
+
+        <p>
+          Fire confidence:
+          <strong id="fireConfidence">—</strong>
+        </p>
+
+      </section>
+
+      <!-- DETECTION DETAILS -->
+      <section class="card">
+
+        <h2>AI Detection Details</h2>
+
+        <pre id="results">No analysis performed yet.</pre>
+
+      </section>
+
+    </div>
+
+
+    <!-- SAVED ALERT HISTORY -->
+    <section class="card">
+      <div class="history-header">
+        <h2>Alert History</h2>
+        <button type="button" id="refreshHistoryButton" onclick="loadAlertHistory()">Refresh History</button>
+      </div>
+      <p class="muted">Saved AI analysis results from this CloudVision backend.</p>
+      <p id="historyStatus" class="muted" role="status">Loading saved results...</p>
+      <div class="history-table-wrap">
+        <table class="history-table">
+          <thead><tr><th>Image</th><th>Result</th><th>Confidence</th><th>Time (Local)</th></tr></thead>
+          <tbody id="historyRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    CloudVision Academic Prototype —
+    Not a certified fire safety system.
+  </footer>
+
+  <script>
+
+    const API_URL = "http://127.0.0.1:8000";
+
+    const imageInput = document.getElementById("imageInput");
+    const canvas = document.getElementById("detectionCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const noPreview = document.getElementById("noPreview");
+    const previewNote = document.getElementById("previewNote");
+
+    const alertBox = document.getElementById("alertBox");
+    const detectButton = document.getElementById("detectButton");
+    const loading = document.getElementById("loading");
+
+    let selectedImage = null;
+    let imageURL = null;
+    let imageSelectionVersion = 0;
+
+    // ======================================================
+    // RESET DETECTION RESULTS
+    // ======================================================
+
+    function resetResults() {
+
+      document.getElementById("totalDetections").textContent = "—";
+      document.getElementById("fireStatus").textContent = "—";
+      document.getElementById("smokeStatus").textContent = "—";
+      document.getElementById("fireConfidence").textContent = "—";
+
+      document.getElementById("results").textContent =
+        "No analysis performed yet.";
+
+    }
+
+    // ======================================================
+    // DRAW IMAGE AND YOLO BOUNDING BOXES
+    // ======================================================
+
+    function drawDetections(detections = []) {
+
+      if (!selectedImage) return;
+
+      canvas.width = selectedImage.naturalWidth;
+      canvas.height = selectedImage.naturalHeight;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.drawImage(
+        selectedImage,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      detections.forEach(function (detection) {
+
+        const box = detection.bounding_box;
+
+        if (!box) return;
+
+        const objectName = String(detection.object || "object");
+        const confidence = Number(detection.confidence || 0);
+
+        const isFire = ["fire", "flame", "flames"].includes(
+          objectName.toLowerCase()
+        );
+
+        const color = isFire ? "#ef4444" : "#f59e0b";
+
+        const x = Number(box.x1);
+        const y = Number(box.y1);
+        const width = Number(box.x2) - x;
+        const height = Number(box.y2) - y;
+
+        if (![x, y, width, height].every(Number.isFinite)) {
+          return;
+        }
+
+        // Bounding box
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(3, canvas.width / 250);
+
+        ctx.strokeRect(x, y, width, height);
+
+        // Confidence label
+        const label =
+          objectName.toUpperCase() +
+          " " +
+          (confidence * 100).toFixed(1) +
+          "%";
+
+        const fontSize = Math.max(14, canvas.width / 45);
+
+        ctx.font = "bold " + fontSize + "px Arial";
+
+        const textWidth = ctx.measureText(label).width;
+        const labelHeight = fontSize + 12;
+
+        const labelY = y >= labelHeight ? y - labelHeight : y;
+
+        ctx.fillStyle = color;
+
+        ctx.fillRect(
+          x,
+          labelY,
+          textWidth + 16,
+          labelHeight
+        );
+
+        ctx.fillStyle = "#ffffff";
+
+        ctx.fillText(
+          label,
+          x + 8,
+          labelY + fontSize + 3
+        );
+
+      });
+
+    }
+
+    // ======================================================
+    // IMAGE SELECTION
+    // ======================================================
+
+    imageInput.addEventListener("change", function () {
+
+      imageSelectionVersion++;
+      const version = imageSelectionVersion;
+
+      const file = imageInput.files[0];
+
+      selectedImage = null;
+
+      resetResults();
+
+      if (imageURL) {
+        URL.revokeObjectURL(imageURL);
+        imageURL = null;
+      }
+
+      if (!file) {
+
+        canvas.classList.add("hidden");
+        previewNote.classList.add("hidden");
+        noPreview.classList.remove("hidden");
+
+        alertBox.className = "status neutral";
+        alertBox.textContent = "Waiting for an image.";
+
+        return;
+      }
+
+      imageURL = URL.createObjectURL(file);
+
+      const image = new Image();
+
+      image.onload = function () {
+
+        if (version !== imageSelectionVersion) return;
+
+        selectedImage = image;
+
+        canvas.classList.remove("hidden");
+        previewNote.classList.remove("hidden");
+        noPreview.classList.add("hidden");
+
+        drawDetections([]);
+
+      };
+
+      image.onerror = function () {
+
+        if (version !== imageSelectionVersion) return;
+
+        alertBox.className = "status danger";
+        alertBox.textContent = "Unable to preview the selected image.";
+
+      };
+
+      image.src = imageURL;
+
+      alertBox.className = "status neutral";
+      alertBox.textContent = "Image ready for analysis.";
+
+    });
+
+    // ======================================================
+    // FIRE DETECTION API
+    // ======================================================
+
+    async function detectFire() {
+
+      const file = imageInput.files[0];
+
+      if (!file || !selectedImage) {
+
+        alert("Please select an image first.");
+
+        return;
+      }
+
+      const selectionVersion = imageSelectionVersion;
+
+      const formData = new FormData();
+
+      formData.append("file", file);
+
+      detectButton.disabled = true;
+      imageInput.disabled = true;
+      loading.classList.remove("hidden");
+
+      alertBox.className = "status neutral";
+      alertBox.textContent = "Analyzing image...";
+
+      try {
+
+        const response = await fetch(API_URL + "/detect", {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error("API error: " + response.status);
+        }
+
+        const data = await response.json();
+        loadAlertHistory();
+
+        if (selectionVersion !== imageSelectionVersion) return;
+
+        // Detection summary
+        document.getElementById("totalDetections").textContent =
+          data.total_detections ?? 0;
+
+        document.getElementById("fireStatus").textContent =
+          data.fire_detected ? "YES" : "NO";
+
+        document.getElementById("smokeStatus").textContent =
+          data.smoke_detected ? "YES" : "NO";
+
+        document.getElementById("fireConfidence").textContent =
+          data.fire_detected
+            ? (Number(data.fire_confidence) * 100).toFixed(1) + "%"
+            : "—";
+
+        document.getElementById("results").textContent =
+          JSON.stringify(data.detections ?? [], null, 2);
+
+        // Draw bounding boxes
+        drawDetections(data.detections ?? []);
+
+        // Display alert
+        if (data.fire_detection_enabled === false) {
+
+          alertBox.className = "status warning";
+          alertBox.textContent =
+            "Fire detection model is not ready.";
+
+        } else if (data.fire_detected) {
+
+          alertBox.className = "status danger";
+          alertBox.textContent =
+            "FIRE ALERT: The AI detected possible fire!";
+
+        } else if (data.smoke_detected) {
+
+          alertBox.className = "status warning";
+          alertBox.textContent =
+            "SMOKE ALERT: The AI detected possible smoke!";
+
+        } else {
+
+          alertBox.className = "status neutral";
+          alertBox.textContent =
+            "No fire or smoke detected by the model. " +
+            "This does not guarantee safety.";
+
+        }
+
+      } catch (error) {
+
+        alertBox.className = "status danger";
+
+        alertBox.textContent =
+          "Connection or analysis error: " + error.message;
+
+      } finally {
+
+        detectButton.disabled = false;
+        imageInput.disabled = false;
+        loading.classList.add("hidden");
+
+      }
+
+    }
+
+
+    // ======================================================
+    // LOAD SAVED ALERT HISTORY
+    // ======================================================
+    async function loadAlertHistory() {
+      const status = document.getElementById("historyStatus");
+      const rows = document.getElementById("historyRows");
+      const button = document.getElementById("refreshHistoryButton");
+      button.disabled = true;
+      status.textContent = "Loading saved results...";
+
+      try {
+        const response = await fetch(API_URL + "/alerts", { cache: "no-store" });
+        if (!response.ok) throw new Error("API error: " + response.status);
+        const data = await response.json();
+        if (!Array.isArray(data.alerts)) throw new Error("Unexpected history response");
+
+        rows.replaceChildren();
+        const alerts = [...data.alerts].reverse();
+        status.textContent = alerts.length + " saved detection record(s).";
+
+        if (alerts.length === 0) {
+          const row = rows.insertRow();
+          const cell = row.insertCell();
+          cell.colSpan = 4;
+          cell.textContent = "No saved results yet. Analyze an image to create a record.";
+          return;
+        }
+
+        alerts.forEach(function (entry) {
+          const row = rows.insertRow();
+          const filename = row.insertCell();
+          const result = row.insertCell();
+          const confidence = row.insertCell();
+          const time = row.insertCell();
+
+          filename.textContent = entry.filename || "Unknown";
+          const state = entry.alert && entry.alert.status || "UNKNOWN";
+          result.textContent = state.replaceAll("_", " ");
+          result.className = state === "FIRE_ALERT" ? "fire-alert" :
+            state === "SMOKE_ALERT" ? "smoke-alert" : "no-alert";
+          const score = entry.fire_detected ? Number(entry.fire_confidence) :
+            entry.smoke_detected ? Number(entry.smoke_confidence) : null;
+          confidence.textContent = score !== null && Number.isFinite(score) ?
+            (score * 100).toFixed(1) + "%" : "—";
+          const date = new Date(entry.timestamp);
+          time.textContent = Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+        });
+      } catch (error) {
+        status.textContent = "Unable to load history: " + error.message;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    loadAlertHistory();
+
+  </script>
+
+</body>
+</html>

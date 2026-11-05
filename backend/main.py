@@ -1,5 +1,6 @@
-
+import json
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 from PIL import Image
 from io import BytesIO
@@ -11,10 +12,27 @@ import threading
 # CLOUDVISION - AI FIRE DETECTION AND ALERT SYSTEM
 # ============================================================
 
+APP_VERSION = "1.3.2"
+
 app = FastAPI(
     title="CloudVision Fire Detection API",
     description="Cloud-based AI fire and smoke detection system",
-    version="1.1.0"
+    version=APP_VERSION
+)
+
+# ============================================================
+# CORS - FRONTEND CONNECTION
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500"
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 # ============================================================
@@ -25,18 +43,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 MODEL_DIR = BASE_DIR / "ai-model" / "models"
 
-GENERAL_MODEL_PATH = BASE_DIR / "yolo11n.pt"
-
 FIRE_MODEL_PATH = MODEL_DIR / "best.pt"
+GENERAL_MODEL_PATH = BASE_DIR / "yolo11n.pt"
 
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 ALLOWED_TYPES = ["image/jpeg", "image/png"]
 
-CONFIDENCE_THRESHOLD = 0.50
+# Experimental detection settings
+CONFIDENCE_THRESHOLD = 0.10
+IMAGE_SIZE = 960
+HISTORY_FILE = BASE_DIR / "backend" / "alert_history.json"
+history_lock = threading.Lock()
 
-# Lock prevents simultaneous model predictions
 prediction_lock = threading.Lock()
+
+FIRE_CLASS_NAMES = {"fire", "flame", "flames"}
+SMOKE_CLASS_NAMES = {"smoke"}
 
 # ============================================================
 # LOAD YOLO MODEL
@@ -46,37 +69,46 @@ fire_model_available = FIRE_MODEL_PATH.is_file()
 
 if fire_model_available:
     print("Loading fire detection model...")
+
     model = YOLO(str(FIRE_MODEL_PATH))
     model_type = "Fire and Smoke Detection YOLO"
+
 else:
     print("Fire-trained model not found.")
-    print("Using general YOLO model for testing.")
-    model = YOLO(str(GENERAL_MODEL_PATH) if GENERAL_MODEL_PATH.is_file()
-                 else "yolo11n.pt")
+    print("Loading general YOLO model instead.")
+
+    if GENERAL_MODEL_PATH.is_file():
+        model = YOLO(str(GENERAL_MODEL_PATH))
+    else:
+        model = YOLO("yolo11n.pt")
+
     model_type = "General YOLO Object Detection"
 
 print("Model loaded successfully.")
 print("Model type:", model_type)
 
-# Check model class names
 model_classes = {
     str(name).strip().lower()
     for name in model.names.values()
 }
-
-FIRE_CLASS_NAMES = {"fire", "flame", "flames"}
-SMOKE_CLASS_NAMES = {"smoke"}
 
 supports_fire = bool(model_classes & FIRE_CLASS_NAMES)
 supports_smoke = bool(model_classes & SMOKE_CLASS_NAMES)
 
 fire_detection_enabled = supports_fire or supports_smoke
 
+print("Fire detection supported:", supports_fire)
+print("Smoke detection supported:", supports_smoke)
+print("Confidence threshold:", CONFIDENCE_THRESHOLD)
+print("Image size:", IMAGE_SIZE)
+print("Backend version:", APP_VERSION)
+
 # ============================================================
-# HELPER FUNCTION - VALIDATE UPLOADED IMAGE
+# IMAGE VALIDATION
 # ============================================================
 
 def read_and_validate_image(file: UploadFile):
+
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=400,
@@ -121,10 +153,11 @@ def read_and_validate_image(file: UploadFile):
 
 @app.get("/")
 def home():
+
     return {
         "project": "CloudVision",
         "description": "AI Fire Detection and Alert System",
-        "version": "1.1.0",
+        "version": APP_VERSION,
         "status": "running",
         "model_type": model_type,
         "fire_detection_enabled": fire_detection_enabled
@@ -132,11 +165,12 @@ def home():
 
 
 # ============================================================
-# HEALTH CHECK ENDPOINT
+# HEALTH CHECK
 # ============================================================
 
 @app.get("/health")
 def health():
+
     return {
         "status": "healthy",
         "service": "CloudVision Backend",
@@ -149,11 +183,12 @@ def health():
 
 
 # ============================================================
-# IMAGE UPLOAD ENDPOINT
+# IMAGE UPLOAD
 # ============================================================
 
 @app.post("/upload")
 def upload_image(file: UploadFile = File(...)):
+
     image, size_bytes = read_and_validate_image(file)
 
     return {
@@ -169,7 +204,7 @@ def upload_image(file: UploadFile = File(...)):
 
 
 # ============================================================
-# YOLO AI DETECTION ENDPOINT
+# YOLO FIRE AND SMOKE DETECTION
 # ============================================================
 
 @app.post("/detect")
@@ -177,12 +212,19 @@ def detect_objects(file: UploadFile = File(...)):
 
     image, size_bytes = read_and_validate_image(file)
 
+    if not fire_detection_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Fire and smoke detection model is not available."
+        )
+
     try:
         with prediction_lock:
             results = model.predict(
                 source=image,
                 device="cpu",
-                conf=0.25,
+                conf=CONFIDENCE_THRESHOLD,
+                imgsz=IMAGE_SIZE,
                 verbose=False
             )
 
@@ -225,54 +267,44 @@ def detect_objects(file: UploadFile = File(...)):
 
         detections.append(detection)
 
-        # Fire detection
         if normalized_name in FIRE_CLASS_NAMES:
-            if confidence >= CONFIDENCE_THRESHOLD:
-                fire_detected = True
-                fire_confidence = max(
-                    fire_confidence,
-                    confidence
-                )
+            fire_detected = True
+            fire_confidence = max(
+                fire_confidence,
+                confidence
+            )
 
-        # Smoke detection
         if normalized_name in SMOKE_CLASS_NAMES:
-            if confidence >= CONFIDENCE_THRESHOLD:
-                smoke_detected = True
-                smoke_confidence = max(
-                    smoke_confidence,
-                    confidence
-                )
+            smoke_detected = True
+            smoke_confidence = max(
+                smoke_confidence,
+                confidence
+            )
 
     # ========================================================
     # ALERT LOGIC
     # ========================================================
 
-    if not fire_detection_enabled:
-        alert_status = "MODEL_NOT_READY"
-        alert_message = (
-            "Fire-trained model is not installed. "
-            "General object detection only."
-        )
-
-    elif fire_detected:
+    if fire_detected:
         alert_status = "FIRE_ALERT"
-        alert_message = "WARNING: Fire detected!"
+        alert_message = "WARNING: Possible fire detected!"
 
     elif smoke_detected:
         alert_status = "SMOKE_ALERT"
-        alert_message = "WARNING: Smoke detected!"
+        alert_message = "WARNING: Possible smoke detected!"
 
     else:
         alert_status = "NO_FIRE_DETECTED"
         alert_message = (
-            "No fire or smoke detected in this image."
+            "No fire or smoke detected by the model. "
+            "This does not guarantee safety."
         )
 
-    # ========================================================
+       # ========================================================
     # API RESPONSE
     # ========================================================
 
-    return {
+    result = {
         "project": "CloudVision",
         "filename": file.filename,
         "size_bytes": size_bytes,
@@ -288,21 +320,24 @@ def detect_objects(file: UploadFile = File(...)):
             "status": alert_status,
             "message": alert_message
         },
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "AI analysis completed"
     }
 
+    save_alert_history(result)
+    return result
+
 
 # ============================================================
-# MODEL INFORMATION ENDPOINT
+# MODEL INFORMATION
 # ============================================================
 
 @app.get("/model-info")
 def model_info():
+
     return {
         "project": "CloudVision",
+        "version": APP_VERSION,
         "model_type": model_type,
         "model_path": str(
             FIRE_MODEL_PATH
@@ -312,5 +347,38 @@ def model_info():
         "fire_detection_enabled": fire_detection_enabled,
         "supported_classes": model.names,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "image_size": IMAGE_SIZE,
         "device": "cpu"
+    }
+    # ============================================================
+# ALERT HISTORY
+# ============================================================
+
+def save_alert_history(result):
+    with history_lock:
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+
+        history.append(result)
+
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+
+
+@app.get("/alerts")
+def get_alert_history():
+    with history_lock:
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+
+    return {
+        "project": "CloudVision",
+        "total_records": len(history),
+        "alerts": history
     }
